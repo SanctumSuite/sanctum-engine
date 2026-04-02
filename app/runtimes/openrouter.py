@@ -84,10 +84,11 @@ class OpenRouterRuntime(LLMRuntime):
         usage = data.get("usage", {})
         tokens_in = usage.get("prompt_tokens", 0)
         tokens_out = usage.get("completion_tokens", 0)
+        cost_usd = float(usage.get("cost", 0) or 0)
 
         logger.info(
             f"OpenRouter done: prompt={tokens_in}, completion={tokens_out}, "
-            f"latency={elapsed_ms}ms, model={data.get('model', model)}"
+            f"cost=${cost_usd:.6f}, latency={elapsed_ms}ms, model={data.get('model', model)}"
         )
 
         if not content:
@@ -99,6 +100,7 @@ class OpenRouterRuntime(LLMRuntime):
             tokens_out=tokens_out,
             latency_ms=elapsed_ms,
             model=data.get("model", model),
+            cost_usd=cost_usd,
         )
 
     async def embed(
@@ -163,6 +165,54 @@ class OpenRouterRuntime(LLMRuntime):
                 return resp.status_code == 200
         except Exception:
             return False
+
+    async def get_account_info(self) -> dict:
+        """Get account balance and usage from OpenRouter."""
+        if not self._api_key:
+            return {"error": "No API key configured"}
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    f"{self._base_url}/key",
+                    headers=self._headers(),
+                )
+                resp.raise_for_status()
+                data = resp.json().get("data", {})
+                return {
+                    "limit": data.get("limit"),
+                    "usage": data.get("usage", 0),
+                    "limit_remaining": data.get("limit_remaining"),
+                    "usage_daily": data.get("usage_daily", 0),
+                    "usage_monthly": data.get("usage_monthly", 0),
+                    "is_free_tier": data.get("is_free_tier", False),
+                }
+        except Exception as e:
+            logger.error(f"Failed to get OpenRouter account info: {e}")
+            return {"error": str(e)}
+
+    async def get_model_pricing(self) -> list[dict]:
+        """Get pricing for all OpenRouter models."""
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(f"{self._base_url}/models")
+                resp.raise_for_status()
+        except Exception as e:
+            logger.error(f"Failed to get OpenRouter pricing: {e}")
+            return []
+
+        result = []
+        for m in resp.json().get("data", []):
+            pricing = m.get("pricing", {})
+            prompt_per_token = float(pricing.get("prompt", "0") or "0")
+            completion_per_token = float(pricing.get("completion", "0") or "0")
+            result.append({
+                "model": m.get("id", ""),
+                "name": m.get("name", ""),
+                "prompt_per_1m": round(prompt_per_token * 1_000_000, 2),
+                "completion_per_1m": round(completion_per_token * 1_000_000, 2),
+                "context_length": m.get("context_length", 0),
+            })
+        return result
 
 
 def infer_openrouter_capabilities(model_id: str) -> list[str]:

@@ -40,6 +40,7 @@ class TaskMeta(BaseModel):
     latency_ms: int
     attempts: int
     temperature: float
+    cost_usd: float = 0.0
 
 
 class AttemptError(BaseModel):

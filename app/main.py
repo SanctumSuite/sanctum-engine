@@ -13,7 +13,7 @@ from fastapi import FastAPI
 
 from .config import settings
 from .db import init_db, SessionLocal
-from .api import tasks, models, health
+from .api import tasks, models, health, settings as settings_api
 
 # Configure logging
 logging.basicConfig(
@@ -33,6 +33,7 @@ app = FastAPI(
 app.include_router(tasks.router)
 app.include_router(models.router)
 app.include_router(health.router)
+app.include_router(settings_api.router)
 
 
 @app.on_event("startup")

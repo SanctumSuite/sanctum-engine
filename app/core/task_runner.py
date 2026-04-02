@@ -207,6 +207,7 @@ async def _run_with_retries(
                         latency_ms=elapsed_ms,
                         attempts=attempt,
                         temperature=attempt_temp,
+                        cost_usd=response.cost_usd,
                     ),
                 )
 
@@ -239,6 +240,7 @@ async def _run_with_retries(
                         latency_ms=elapsed_ms,
                         attempts=attempt,
                         temperature=attempt_temp,
+                        cost_usd=response.cost_usd,
                     ),
                 )
 

@@ -11,6 +11,7 @@ class RuntimeResponse:
     tokens_out: int
     latency_ms: int
     model: str
+    cost_usd: float = 0.0  # Actual cost in USD (OpenRouter provides this; 0 for local)
 
 
 @dataclass
