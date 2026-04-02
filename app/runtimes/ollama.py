@@ -7,6 +7,7 @@ Uses the native Ollama API (not OpenAI-compatible) for access to:
 - Thinking content handling
 """
 import logging
+import re
 import time
 
 import httpx
@@ -41,6 +42,7 @@ class OllamaRuntime(LLMRuntime):
             "model": model,
             "messages": messages,
             "stream": False,
+            "think": False,
             "options": {
                 "temperature": temperature,
                 "num_predict": max_tokens,
@@ -78,6 +80,10 @@ class OllamaRuntime(LLMRuntime):
             f"Ollama done: {duration:.1f}s, prompt={tokens_in}, "
             f"completion={tokens_out}, latency={elapsed_ms}ms"
         )
+
+        # Strip any residual thinking tags
+        if "<think>" in content:
+            content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
 
         if not content:
             logger.warning(f"Ollama returned empty content for model={model}")
