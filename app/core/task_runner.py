@@ -37,9 +37,20 @@ async def run_task(
     start = time.monotonic()
 
     # --- Resolve model ---
-    resolved = model_resolver.resolve_model_with_fallback(
-        db, request.model_preference, settings.default_runtime,
-    )
+    runtime_name = request.runtime or settings.default_runtime
+
+    if request.model:
+        # Direct model override — skip capability resolution
+        resolved = model_resolver.ResolvedModel(
+            name=request.model,
+            safe_context_limit=request.context_budget or settings.default_context_budget,
+            runtime=runtime_name,
+            config=model_resolver.get_model_config(request.model),
+        )
+    else:
+        resolved = model_resolver.resolve_model_with_fallback(
+            db, request.model_preference, runtime_name,
+        )
     if not resolved:
         return _error_response(
             task_id=task_id,

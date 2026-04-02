@@ -25,6 +25,8 @@ class TaskRequest(BaseModel):
     temperature: float | None = Field(None, ge=0.0, le=2.0)
     max_tokens: int | None = Field(None, description="Max output tokens")
     chunking: ChunkingConfig | None = None
+    runtime: str | None = Field(None, description="Runtime override: 'ollama' or 'openrouter'")
+    model: str | None = Field(None, description="Specific model name override (skips capability resolution)")
 
 
 class TaskMeta(BaseModel):

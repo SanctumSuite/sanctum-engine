@@ -62,6 +62,22 @@ async def startup():
     if ollama_ok:
         await _discover_models(runtime)
 
+    # 4. Check OpenRouter if configured
+    if settings.openrouter_api_key:
+        from .runtimes.openrouter import OpenRouterRuntime
+        or_runtime = OpenRouterRuntime(
+            api_key=settings.openrouter_api_key,
+            base_url=settings.openrouter_base_url,
+        )
+        or_ok = await or_runtime.is_healthy()
+        if or_ok:
+            logger.info("OpenRouter connected")
+            await _discover_openrouter_models(or_runtime)
+        else:
+            logger.warning("OpenRouter API key set but connection failed")
+    else:
+        logger.info("OpenRouter not configured (no API key)")
+
     logger.info("Sanctum Engine ready")
 
 
@@ -133,6 +149,64 @@ async def _discover_models(runtime):
         db.commit()
     except Exception as e:
         logger.error(f"Model discovery failed: {e}")
+        db.rollback()
+    finally:
+        db.close()
+
+
+async def _discover_openrouter_models(runtime):
+    """Register popular OpenRouter models in the registry."""
+    from .models.db import ModelRegistry
+    from .runtimes.openrouter import infer_openrouter_capabilities
+
+    models_list = await runtime.list_models()
+    logger.info(f"Found {len(models_list)} models on OpenRouter")
+
+    # Register a curated subset of popular models (not all 200+)
+    CURATED_PREFIXES = [
+        "anthropic/claude", "google/gemini", "openai/gpt-4",
+        "meta-llama/llama", "mistralai/", "deepseek/", "qwen/",
+    ]
+
+    db = SessionLocal()
+    registered = 0
+    try:
+        for model in models_list:
+            # Only register models from curated families
+            if not any(model.name.lower().startswith(p) for p in CURATED_PREFIXES):
+                continue
+
+            capabilities = infer_openrouter_capabilities(model.name)
+            context_length = model.context_length or 128000
+            safe_limit = min(int(context_length * 0.7), 128000)
+
+            existing = db.query(ModelRegistry).filter(ModelRegistry.name == model.name).first()
+            if existing:
+                existing.context_length = context_length
+                existing.safe_context_limit = safe_limit
+                existing.capabilities = capabilities
+                existing.is_available = True
+                existing.runtime = "openrouter"
+            else:
+                db.add(ModelRegistry(
+                    name=model.name,
+                    parameter_size="cloud",
+                    quantization="none",
+                    context_length=context_length,
+                    safe_context_limit=safe_limit,
+                    capabilities=capabilities,
+                    size_bytes=0,
+                    runtime="openrouter",
+                    is_available=True,
+                    priority=50,
+                    config={},
+                ))
+            registered += 1
+
+        db.commit()
+        logger.info(f"Registered {registered} OpenRouter models")
+    except Exception as e:
+        logger.error(f"OpenRouter model discovery failed: {e}")
         db.rollback()
     finally:
         db.close()

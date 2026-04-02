@@ -31,6 +31,10 @@ class EngineConfig(BaseSettings):
     default_temperature: float = 0.3
     embedding_model: str = "nomic-embed-text:latest"
 
+    # OpenRouter (cloud models)
+    openrouter_api_key: str = ""
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+
     model_config = {"env_prefix": "SANCTUM_"}
 
 
