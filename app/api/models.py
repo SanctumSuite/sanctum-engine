@@ -31,6 +31,7 @@ def list_models(db: Session = Depends(get_db)):
                 capabilities=m.capabilities or [],
                 size_gb=round((m.size_bytes or 0) / 1e9, 1),
                 loaded=False,  # TODO: track loaded state via Ollama ps
+                runtime=m.runtime or "ollama",
             )
             for m in models
         ]

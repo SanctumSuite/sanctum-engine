@@ -108,6 +108,7 @@ class ModelInfo(BaseModel):
     capabilities: list[str]
     size_gb: float
     loaded: bool
+    runtime: str = "ollama"
 
 
 class ModelListResponse(BaseModel):
