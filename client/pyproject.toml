@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sanctum-engine-client"
+version = "0.1.0"
+description = "Python client for Sanctum Engine — the LLM service layer of the Sanctum Suite."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Sanctum Suite", email = "noreply@sanctumsuite.dev" }]
+requires-python = ">=3.10"
+dependencies = [
+    "httpx>=0.27.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/SanctumSuite/sanctum-engine"
+Source = "https://github.com/SanctumSuite/sanctum-engine"
+
+[tool.hatch.build.targets.wheel]
+packages = ["sanctum_engine_client"]

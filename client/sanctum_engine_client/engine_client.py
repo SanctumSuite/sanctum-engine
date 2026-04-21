@@ -1,0 +1,146 @@
+"""Async HTTP client for Sanctum Engine.
+
+All Sanctum Suite apps call Engine through this client instead of hitting
+Ollama/OpenRouter directly. It mirrors the shape translachat's in-tree
+engine_client.py established — run_task() for general use, translate() for
+the most common app case.
+"""
+from __future__ import annotations
+
+import logging
+import os
+import time
+from typing import Any
+
+import httpx
+
+logger = logging.getLogger(__name__)
+
+ENGINE_URL: str = os.environ.get("ENGINE_URL", "http://localhost:8100")
+_DEFAULT_CONNECT_TIMEOUT = float(os.environ.get("ENGINE_TIMEOUT_CONNECT", "10.0"))
+_DEFAULT_READ_TIMEOUT = float(os.environ.get("ENGINE_TIMEOUT_READ", "120.0"))
+
+
+class EngineError(RuntimeError):
+    """Engine returned status=error or the HTTP call failed."""
+
+    def __init__(self, code: str, message: str, attempts: list | None = None) -> None:
+        super().__init__(f"{code}: {message}")
+        self.code = code
+        self.message = message
+        self.attempts = attempts or []
+
+
+def _timeout(connect: float | None = None, read: float | None = None) -> httpx.Timeout:
+    return httpx.Timeout(
+        connect=connect if connect is not None else _DEFAULT_CONNECT_TIMEOUT,
+        read=read if read is not None else _DEFAULT_READ_TIMEOUT,
+        write=30.0,
+        pool=60.0,
+    )
+
+
+async def engine_health(base_url: str | None = None) -> bool:
+    """Is Engine reachable? Swallows errors, returns bool."""
+    url = base_url or ENGINE_URL
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"{url}/health")
+            return resp.status_code == 200
+    except Exception:
+        return False
+
+
+async def run_task(
+    task_type: str,
+    model_preference: str = "fast",
+    *,
+    system_prompt: str = "",
+    user_prompt: str = "",
+    model: str | None = None,
+    output_schema: dict[str, Any] | None = None,
+    max_retries: int = 3,
+    context_budget: int | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+    runtime: str | None = None,
+    chunking: dict[str, Any] | None = None,
+    base_url: str | None = None,
+    connect_timeout: float | None = None,
+    read_timeout: float | None = None,
+) -> tuple[Any, int]:
+    """Run a task on Engine. Returns (result, latency_ms).
+
+    Mirrors the full TaskRequest surface. Raises EngineError on failure.
+
+    task_type:       "generate_text" | "extract_json" | "embed" | "vision" | "translate" | "rerank"
+    model_preference:"reasoning" | "fast" | "vision" | "embedding" | "translation" | "ocr" | <model-name>
+    """
+    url = base_url or ENGINE_URL
+    payload: dict[str, Any] = {
+        "task_type": task_type,
+        "model_preference": model_preference,
+        "system_prompt": system_prompt,
+        "user_prompt": user_prompt,
+        "max_retries": max_retries,
+    }
+    if model is not None:
+        payload["model"] = model
+    if output_schema is not None:
+        payload["output_schema"] = output_schema
+    if context_budget is not None:
+        payload["context_budget"] = context_budget
+    if temperature is not None:
+        payload["temperature"] = temperature
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
+    if runtime is not None:
+        payload["runtime"] = runtime
+    if chunking is not None:
+        payload["chunking"] = chunking
+
+    started = time.time()
+    async with httpx.AsyncClient(timeout=_timeout(connect_timeout, read_timeout)) as client:
+        resp = await client.post(f"{url}/task", json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+    latency_ms = int((time.time() - started) * 1000)
+
+    if data.get("status") != "success":
+        err = data.get("error") or {}
+        raise EngineError(
+            code=err.get("code", "UNKNOWN"),
+            message=err.get("message", ""),
+            attempts=err.get("attempts", []),
+        )
+    return data["result"], latency_ms
+
+
+async def translate(
+    text: str,
+    source_lang_label: str,
+    target_lang_label: str,
+    model: str | None = None,
+    *,
+    base_url: str | None = None,
+    read_timeout: float | None = None,
+) -> tuple[str, int]:
+    """Translate `text` from one language to another via Engine.
+
+    Compatible with translachat's in-tree engine_client.translate signature.
+    Returns (translated_text, latency_ms).
+    """
+    system_prompt = (
+        f"Translate the following text from {source_lang_label} to {target_lang_label}. "
+        f"Output ONLY the translation — no commentary, no quotes, no language labels."
+    )
+    return await run_task(
+        task_type="generate_text",
+        model_preference="translation",
+        system_prompt=system_prompt,
+        user_prompt=text,
+        model=model,
+        max_retries=2,
+        base_url=base_url,
+        read_timeout=read_timeout,
+    )

@@ -1,0 +1,19 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.venv/
+venv/
+.env
+.env.local
+*.egg-info/
+dist/
+build/
+.mypy_cache/
+.ruff_cache/
+
+# Client package build artifacts
+client/dist/
+client/build/
+client/*.egg-info/

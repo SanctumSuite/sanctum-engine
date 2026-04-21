@@ -1,0 +1,44 @@
+services:
+  sanctum-engine:
+    build: .
+    ports:
+      - "8100:8100"
+    environment:
+      - SANCTUM_OLLAMA_HOST=${SANCTUM_OLLAMA_HOST:-http://host.docker.internal:11434}
+      - SANCTUM_DATABASE_URL=postgresql://sanctum:sanctum@postgres:5432/sanctum_engine
+      - SANCTUM_OPENROUTER_API_KEY=${SANCTUM_OPENROUTER_API_KEY:-}
+      - SANCTUM_LOG_LEVEL=${SANCTUM_LOG_LEVEL:-INFO}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2'
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    ports:
+      - "5433:5432"
+    environment:
+      - POSTGRES_USER=sanctum
+      - POSTGRES_PASSWORD=sanctum
+      - POSTGRES_DB=sanctum_engine
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sanctum -d sanctum_engine"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+
+volumes:
+  pgdata:
