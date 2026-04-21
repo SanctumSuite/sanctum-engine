@@ -3,18 +3,20 @@
 All Sanctum Suite apps call Engine through this client instead of hitting
 Ollama/OpenRouter directly. It mirrors the shape translachat's in-tree
 engine_client.py established — run_task() for general use, translate() for
-the most common app case.
+the most common app case, plus embed_texts() for embedding work.
 """
 from __future__ import annotations
 
 import logging
 import os
 import time
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 
 logger = logging.getLogger(__name__)
+
+OnCompleteCallback = Callable[[dict], None]
 
 ENGINE_URL: str = os.environ.get("ENGINE_URL", "http://localhost:8100")
 _DEFAULT_CONNECT_TIMEOUT = float(os.environ.get("ENGINE_TIMEOUT_CONNECT", "10.0"))
@@ -68,6 +70,7 @@ async def run_task(
     base_url: str | None = None,
     connect_timeout: float | None = None,
     read_timeout: float | None = None,
+    on_complete: OnCompleteCallback | None = None,
 ) -> tuple[Any, int]:
     """Run a task on Engine. Returns (result, latency_ms).
 
@@ -75,6 +78,11 @@ async def run_task(
 
     task_type:       "generate_text" | "extract_json" | "embed" | "vision" | "translate" | "rerank"
     model_preference:"reasoning" | "fast" | "vision" | "embedding" | "translation" | "ocr" | <model-name>
+
+    on_complete:     optional callback receiving Engine's full `meta` dict
+                     (model_used, runtime, tokens_in, tokens_out, cost_usd,
+                     attempts, latency_ms, …) on success. Use for cost
+                     tracking, telemetry, per-task logging in the caller.
     """
     url = base_url or ENGINE_URL
     payload: dict[str, Any] = {
@@ -113,7 +121,51 @@ async def run_task(
             message=err.get("message", ""),
             attempts=err.get("attempts", []),
         )
+
+    if on_complete is not None:
+        try:
+            on_complete(data.get("meta") or {})
+        except Exception as e:
+            logger.warning("on_complete callback raised: %s", e)
+
     return data["result"], latency_ms
+
+
+async def embed_texts(
+    texts: list[str],
+    model: str | None = None,
+    *,
+    base_url: str | None = None,
+    read_timeout: float | None = None,
+) -> list[list[float]]:
+    """Generate embeddings for `texts`. Returns a list of vectors (one per text).
+
+    Model defaults to the Engine server's `embedding_model` setting when None.
+    """
+    if not texts:
+        return []
+    url = base_url or ENGINE_URL
+    payload: dict[str, Any] = {"texts": texts}
+    if model is not None:
+        payload["model"] = model
+
+    async with httpx.AsyncClient(timeout=_timeout(None, read_timeout)) as client:
+        resp = await client.post(f"{url}/task/embed", json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+    return data.get("embeddings") or []
+
+
+async def embed_query(
+    text: str,
+    model: str | None = None,
+    *,
+    base_url: str | None = None,
+    read_timeout: float | None = None,
+) -> list[float]:
+    """Embed a single string. Convenience wrapper over embed_texts()."""
+    vectors = await embed_texts([text], model=model, base_url=base_url, read_timeout=read_timeout)
+    return vectors[0] if vectors else []
 
 
 async def translate(
