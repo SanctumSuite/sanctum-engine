@@ -7,6 +7,7 @@ the most common app case, plus embed_texts() for embedding work.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
@@ -166,6 +167,39 @@ async def embed_query(
     """Embed a single string. Convenience wrapper over embed_texts()."""
     vectors = await embed_texts([text], model=model, base_url=base_url, read_timeout=read_timeout)
     return vectors[0] if vectors else []
+
+
+async def run_tasks_parallel(
+    task_specs: list[dict[str, Any]],
+    *,
+    base_url: str | None = None,
+    connect_timeout: float | None = None,
+    read_timeout: float | None = None,
+    return_exceptions: bool = True,
+) -> list[tuple[Any, int] | BaseException]:
+    """Run many tasks concurrently against Engine.
+
+    Each entry in `task_specs` is a kwargs dict for `run_task(...)` — e.g.
+    `{"task_type": "generate_text", "model": "qwen3:32b", "user_prompt": "…"}`.
+
+    Used for multi-model compare (Consilium's core feature, also llm-counsil's
+    parallel-query pattern). Engine itself processes each task serially inside
+    the single runtime; this helper just overlaps the HTTP calls.
+
+    Returns a list aligned with `task_specs`. When `return_exceptions=True`
+    (default), failed tasks come back as the exception object so a single
+    model error doesn't fail the whole batch.
+    """
+    coros = [
+        run_task(
+            base_url=base_url,
+            connect_timeout=connect_timeout,
+            read_timeout=read_timeout,
+            **spec,
+        )
+        for spec in task_specs
+    ]
+    return await asyncio.gather(*coros, return_exceptions=return_exceptions)
 
 
 async def translate(

@@ -3,4 +3,4 @@ from . import engine_client
 from .engine_client import ENGINE_URL, EngineError, OnCompleteCallback
 
 __all__ = ["engine_client", "ENGINE_URL", "EngineError", "OnCompleteCallback"]
-__version__ = "0.1.1"
+__version__ = "0.1.2"

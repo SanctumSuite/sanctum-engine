@@ -33,6 +33,14 @@ translated, latency_ms = await engine_client.translate(
 vectors = await engine_client.embed_texts(["hello world", "goodnight moon"])
 query_vec = await engine_client.embed_query("what does foo mean?")
 
+# Run many tasks in parallel (multi-model compare)
+results = await engine_client.run_tasks_parallel([
+    {"task_type": "generate_text", "model": "qwen3:32b", "user_prompt": "Summarize X"},
+    {"task_type": "generate_text", "model": "gemma4:31b", "user_prompt": "Summarize X"},
+    {"task_type": "generate_text", "model": "gpt-oss:latest", "user_prompt": "Summarize X"},
+])
+# results[i] is (result, latency_ms) or an Exception per-task
+
 # Health check
 is_up = await engine_client.engine_health()
 ```
