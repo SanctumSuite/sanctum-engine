@@ -8,10 +8,11 @@ the most common app case, plus embed_texts() for embedding work.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time
-from typing import Any, Callable
+from typing import Any, AsyncIterator, Callable
 
 import httpx
 
@@ -167,6 +168,64 @@ async def embed_query(
     """Embed a single string. Convenience wrapper over embed_texts()."""
     vectors = await embed_texts([text], model=model, base_url=base_url, read_timeout=read_timeout)
     return vectors[0] if vectors else []
+
+
+async def run_task_stream(
+    task_type: str = "generate_text",
+    model_preference: str = "fast",
+    *,
+    system_prompt: str = "",
+    user_prompt: str = "",
+    model: str | None = None,
+    max_retries: int = 1,
+    context_budget: int | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+    runtime: str | None = None,
+    base_url: str | None = None,
+    connect_timeout: float | None = None,
+    read_timeout: float | None = None,
+) -> AsyncIterator[dict[str, Any]]:
+    """Stream a task from Engine. Yields parsed NDJSON chunks.
+
+    Each yielded dict is one of:
+      - {"type": "delta", "content": "..."}   — generated text chunk
+      - {"type": "done",  "meta": { ... }}    — stream finished
+      - {"type": "error", "code": "...", "message": "..."}
+
+    Only task_type="generate_text" is supported in streaming mode.
+    Consumers should assemble the full text by concatenating deltas and
+    use the done chunk's meta for tokens/latency/cost telemetry.
+    """
+    url = base_url or ENGINE_URL
+    payload: dict[str, Any] = {
+        "task_type": task_type,
+        "model_preference": model_preference,
+        "system_prompt": system_prompt,
+        "user_prompt": user_prompt,
+        "max_retries": max_retries,
+    }
+    if model is not None:
+        payload["model"] = model
+    if context_budget is not None:
+        payload["context_budget"] = context_budget
+    if temperature is not None:
+        payload["temperature"] = temperature
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
+    if runtime is not None:
+        payload["runtime"] = runtime
+
+    async with httpx.AsyncClient(timeout=_timeout(connect_timeout, read_timeout)) as client:
+        async with client.stream("POST", f"{url}/task/stream", json=payload) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if not line or not line.strip():
+                    continue
+                try:
+                    yield json.loads(line)
+                except json.JSONDecodeError as e:
+                    logger.warning("sanctum-engine-client: unparseable stream line: %s", e)
 
 
 async def run_tasks_parallel(

@@ -6,14 +6,16 @@ Uses the native Ollama API (not OpenAI-compatible) for access to:
 - Token count reporting (prompt_eval_count, eval_count)
 - Thinking content handling
 """
+import json
 import logging
 import re
 import time
+from typing import AsyncIterator
 
 import httpx
 
 from ..config import settings
-from .base import LLMRuntime, RuntimeResponse, RuntimeModelInfo
+from .base import LLMRuntime, RuntimeResponse, RuntimeModelInfo, StreamDelta, StreamDone
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +92,65 @@ class OllamaRuntime(LLMRuntime):
 
         return RuntimeResponse(
             content=content,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            latency_ms=elapsed_ms,
+            model=model,
+        )
+
+    async def generate_stream(
+        self,
+        model: str,
+        messages: list[dict],
+        temperature: float,
+        max_tokens: int,
+        num_ctx: int,
+    ) -> AsyncIterator[StreamDelta | StreamDone]:
+        """Stream a completion chunk-by-chunk via Ollama's native chat API."""
+        payload = {
+            "model": model,
+            "messages": messages,
+            "stream": True,
+            "think": False,
+            "options": {
+                "temperature": temperature,
+                "num_predict": max_tokens,
+                "num_ctx": num_ctx,
+            },
+        }
+
+        logger.info(f"Ollama stream start: model={model}, num_ctx={num_ctx}")
+        start = time.monotonic()
+        tokens_in = 0
+        tokens_out = 0
+
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            async with client.stream("POST", f"{self._host}/api/chat", json=payload) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if not line:
+                        continue
+                    try:
+                        chunk = json.loads(line)
+                    except json.JSONDecodeError:
+                        logger.warning(f"Ollama stream: unparseable line: {line[:120]}")
+                        continue
+
+                    msg = chunk.get("message") or {}
+                    content = msg.get("content", "") or ""
+                    if content:
+                        yield StreamDelta(content=content)
+
+                    if chunk.get("done"):
+                        tokens_in = int(chunk.get("prompt_eval_count") or 0)
+                        tokens_out = int(chunk.get("eval_count") or 0)
+                        break
+
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+        logger.info(
+            f"Ollama stream done: prompt={tokens_in}, completion={tokens_out}, latency={elapsed_ms}ms"
+        )
+        yield StreamDone(
             tokens_in=tokens_in,
             tokens_out=tokens_out,
             latency_ms=elapsed_ms,

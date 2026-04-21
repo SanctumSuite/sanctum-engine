@@ -3,12 +3,14 @@
 Uses OpenRouter's OpenAI-compatible API for cloud model access.
 Embeddings are NOT supported — use Ollama for embeddings.
 """
+import json
 import logging
 import time
+from typing import AsyncIterator
 
 import httpx
 
-from .base import LLMRuntime, RuntimeResponse, RuntimeModelInfo
+from .base import LLMRuntime, RuntimeResponse, RuntimeModelInfo, StreamDelta, StreamDone
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +102,81 @@ class OpenRouterRuntime(LLMRuntime):
             tokens_out=tokens_out,
             latency_ms=elapsed_ms,
             model=data.get("model", model),
+            cost_usd=cost_usd,
+        )
+
+    async def generate_stream(
+        self,
+        model: str,
+        messages: list[dict],
+        temperature: float,
+        max_tokens: int,
+        num_ctx: int,
+    ) -> AsyncIterator[StreamDelta | StreamDone]:
+        """Stream a completion via OpenRouter's SSE-style chat/completions endpoint."""
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": True,
+            "usage": {"include": True},  # ask OpenRouter to send a usage chunk
+        }
+
+        logger.info(f"OpenRouter stream start: model={model}")
+        start = time.monotonic()
+        tokens_in = 0
+        tokens_out = 0
+        cost_usd = 0.0
+        model_used = model
+
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            async with client.stream(
+                "POST",
+                f"{self._base_url}/chat/completions",
+                headers=self._headers(),
+                json=payload,
+            ) as resp:
+                resp.raise_for_status()
+                async for raw_line in resp.aiter_lines():
+                    if not raw_line or not raw_line.startswith("data:"):
+                        continue
+                    body = raw_line[5:].strip()
+                    if not body or body == "[DONE]":
+                        continue
+                    try:
+                        chunk = json.loads(body)
+                    except json.JSONDecodeError:
+                        logger.warning(f"OpenRouter stream: unparseable SSE line: {body[:120]}")
+                        continue
+
+                    # Capture model id if OpenRouter reveals it mid-stream
+                    model_used = chunk.get("model") or model_used
+
+                    choices = chunk.get("choices") or []
+                    if choices:
+                        delta = choices[0].get("delta") or {}
+                        content = delta.get("content") or ""
+                        if content:
+                            yield StreamDelta(content=content)
+
+                    # Usage appears in its own chunk when `usage.include=true`
+                    usage = chunk.get("usage") or {}
+                    if usage:
+                        tokens_in = int(usage.get("prompt_tokens") or tokens_in)
+                        tokens_out = int(usage.get("completion_tokens") or tokens_out)
+                        cost_usd = float(usage.get("cost") or cost_usd)
+
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+        logger.info(
+            f"OpenRouter stream done: prompt={tokens_in}, completion={tokens_out}, "
+            f"cost=${cost_usd:.6f}, latency={elapsed_ms}ms, model={model_used}"
+        )
+        yield StreamDone(
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            latency_ms=elapsed_ms,
+            model=model_used,
             cost_usd=cost_usd,
         )
 

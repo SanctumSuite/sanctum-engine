@@ -1,6 +1,7 @@
 """Abstract runtime interface for LLM backends."""
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import AsyncIterator
 
 
 @dataclass
@@ -12,6 +13,22 @@ class RuntimeResponse:
     latency_ms: int
     model: str
     cost_usd: float = 0.0  # Actual cost in USD (OpenRouter provides this; 0 for local)
+
+
+@dataclass
+class StreamDelta:
+    """One chunk of streamed text from a runtime."""
+    content: str
+
+
+@dataclass
+class StreamDone:
+    """Terminal event on a runtime stream: totals + metadata."""
+    tokens_in: int
+    tokens_out: int
+    latency_ms: int
+    model: str
+    cost_usd: float = 0.0
 
 
 @dataclass
@@ -37,8 +54,24 @@ class LLMRuntime(ABC):
         max_tokens: int,
         num_ctx: int,
     ) -> RuntimeResponse:
-        """Generate a completion."""
+        """Generate a completion (single-shot)."""
         ...
+
+    async def generate_stream(
+        self,
+        model: str,
+        messages: list[dict],
+        temperature: float,
+        max_tokens: int,
+        num_ctx: int,
+    ) -> AsyncIterator["StreamDelta | StreamDone"]:
+        """Generate a completion as a stream of deltas, ending with StreamDone.
+
+        Default implementation raises NotImplementedError — runtimes that
+        support streaming override this.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not support streaming")
+        yield  # pragma: no cover  (makes this an async generator for typing)
 
     @abstractmethod
     async def embed(
