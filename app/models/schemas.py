@@ -32,6 +32,10 @@ class TaskRequest(BaseModel):
     max_tokens: int | None = Field(None, description="Max output tokens")
     chunking: ChunkingConfig | None = None
     runtime: str | None = Field(None, description="Runtime override: 'ollama' or 'openrouter'")
+    runtime_api_key: str | None = Field(
+        None,
+        description="Per-request API key for cloud runtimes (OpenRouter). Overrides the server's SANCTUM_OPENROUTER_API_KEY env var, useful for bring-your-own-key apps like Consilium.",
+    )
     model: str | None = Field(None, description="Specific model name override (skips capability resolution)")
 
 

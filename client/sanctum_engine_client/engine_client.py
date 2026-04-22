@@ -69,6 +69,7 @@ async def run_task(
     temperature: float | None = None,
     max_tokens: int | None = None,
     runtime: str | None = None,
+    runtime_api_key: str | None = None,
     chunking: dict[str, Any] | None = None,
     base_url: str | None = None,
     connect_timeout: float | None = None,
@@ -114,6 +115,8 @@ async def run_task(
         payload["max_tokens"] = max_tokens
     if runtime is not None:
         payload["runtime"] = runtime
+    if runtime_api_key is not None:
+        payload["runtime_api_key"] = runtime_api_key
     if chunking is not None:
         payload["chunking"] = chunking
 
@@ -191,6 +194,7 @@ async def run_task_stream(
     temperature: float | None = None,
     max_tokens: int | None = None,
     runtime: str | None = None,
+    runtime_api_key: str | None = None,
     base_url: str | None = None,
     connect_timeout: float | None = None,
     read_timeout: float | None = None,
@@ -226,6 +230,8 @@ async def run_task_stream(
         payload["max_tokens"] = max_tokens
     if runtime is not None:
         payload["runtime"] = runtime
+    if runtime_api_key is not None:
+        payload["runtime_api_key"] = runtime_api_key
 
     async with httpx.AsyncClient(timeout=_timeout(connect_timeout, read_timeout)) as client:
         async with client.stream("POST", f"{url}/task/stream", json=payload) as resp:

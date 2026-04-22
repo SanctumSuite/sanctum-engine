@@ -42,13 +42,29 @@ def get_runtime(name: str) -> LLMRuntime:
     return _runtimes[name]
 
 
+def get_runtime_for_request(name: str, request: TaskRequest) -> LLMRuntime:
+    """Like get_runtime, but honors per-request API-key overrides.
+
+    Consilium and similar bring-your-own-key apps attach the end-user's
+    API key to each request; we create a per-request (uncached) runtime
+    so distinct users' keys don't bleed into each other.
+    """
+    if name == "openrouter" and request.runtime_api_key:
+        from ..runtimes.openrouter import OpenRouterRuntime
+        return OpenRouterRuntime(
+            api_key=request.runtime_api_key,
+            base_url=settings.openrouter_base_url,
+        )
+    return get_runtime(name)
+
+
 @router.post("/task", response_model=TaskResponse)
 async def execute_task(request: TaskRequest, db: Session = Depends(get_db)):
     """Execute an LLM task with context management, validation, and retry logic."""
     # Select runtime: request override > default
     runtime_name = request.runtime or settings.default_runtime
     try:
-        runtime = get_runtime(runtime_name)
+        runtime = get_runtime_for_request(runtime_name, request)
     except ValueError as e:
         from ..models.schemas import TaskResponse, TaskError, TaskMeta
         import uuid, time
@@ -106,7 +122,7 @@ async def stream_task(request: TaskRequest, db: Session = Depends(get_db)):
         # Resolve model (same logic as /task).
         runtime_name = request.runtime or settings.default_runtime
         try:
-            runtime: LLMRuntime = get_runtime(runtime_name)
+            runtime: LLMRuntime = get_runtime_for_request(runtime_name, request)
         except ValueError as e:
             yield _ndjson({"type": "error", "code": "RUNTIME_UNAVAILABLE", "message": str(e)})
             return
