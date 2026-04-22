@@ -65,16 +65,32 @@ async def run_task(
     context_budget = request.context_budget or settings.default_context_budget
     safe_limit = min(context_budget, resolved.safe_context_limit)
 
-    # --- Apply model-specific config ---
-    system_prompt = request.system_prompt
-    user_prompt = request.user_prompt
+    # --- Messages vs prompt-pair mode ---
+    # Callers can supply a full multi-turn messages array; if they do, we
+    # bypass the system_prompt/user_prompt shorthand entirely and also skip
+    # the retry-time format-reminder injection (since we don't want to
+    # mutate caller-supplied conversation history).
+    messages_override: list[dict] | None = None
+    if request.messages:
+        messages_override = list(request.messages)
+        # Derive pseudo prompts for the context-budget check only.
+        system_prompt = "\n".join(
+            str(m.get("content") or "") for m in messages_override if m.get("role") == "system"
+        )
+        user_prompt = "\n".join(
+            str(m.get("content") or "") for m in messages_override if m.get("role") != "system"
+        )
+    else:
+        # --- Apply model-specific config (prompt-pair path only) ---
+        system_prompt = request.system_prompt
+        user_prompt = request.user_prompt
 
-    if request.task_type == "extract_json":
-        system_prompt = system_prompt + "\n\nYou MUST respond with valid JSON only. No markdown, no code fences, no explanation — just the JSON object."
+        if request.task_type == "extract_json":
+            system_prompt = system_prompt + "\n\nYou MUST respond with valid JSON only. No markdown, no code fences, no explanation — just the JSON object."
 
-    model_config = resolved.config
-    if model_config.get("append_to_prompt"):
-        user_prompt = user_prompt + " " + model_config["append_to_prompt"]
+        model_config = resolved.config
+        if model_config.get("append_to_prompt"):
+            user_prompt = user_prompt + " " + model_config["append_to_prompt"]
 
     # --- Check context budget ---
     budget = context_manager.check_context_budget(
@@ -85,8 +101,9 @@ async def run_task(
     )
 
     if not budget.fits:
-        # If chunking is enabled, handle it
-        if request.chunking and request.chunking.enabled:
+        # If chunking is enabled, handle it (prompt-pair mode only — a
+        # caller-supplied messages array is treated as atomic).
+        if request.chunking and request.chunking.enabled and messages_override is None:
             return await _run_chunked(
                 request=request,
                 runtime=runtime,
@@ -123,6 +140,7 @@ async def run_task(
         safe_limit=safe_limit,
         budget=budget,
         start=start,
+        messages_override=messages_override,
     )
 
 
@@ -139,6 +157,7 @@ async def _run_with_retries(
     safe_limit: int,
     budget: context_manager.ContextBudgetResult,
     start: float,
+    messages_override: list[dict] | None = None,
 ) -> TaskResponse:
     """Execute LLM call with retry logic on validation failure."""
     attempt_errors: list[AttemptError] = []
@@ -149,16 +168,21 @@ async def _run_with_retries(
         # Adjust temperature on retries
         attempt_temp = temperature * (settings.retry_temperature_decay ** (attempt - 1))
 
-        # Add format reminder on retries
-        if attempt > 1 and request.task_type == "extract_json":
-            retry_prompt = user_prompt + "\n\nIMPORTANT: Respond ONLY with the JSON object. Keep it concise."
+        if messages_override is not None:
+            # Caller supplied full conversation history — reuse unchanged.
+            # Retry just re-sends the same messages at a cooler temperature.
+            messages = messages_override
         else:
-            retry_prompt = user_prompt
+            # Add format reminder on retries for JSON tasks
+            if attempt > 1 and request.task_type == "extract_json":
+                retry_prompt = user_prompt + "\n\nIMPORTANT: Respond ONLY with the JSON object. Keep it concise."
+            else:
+                retry_prompt = user_prompt
 
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": retry_prompt},
-        ]
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": retry_prompt},
+            ]
 
         try:
             response = await runtime.generate(

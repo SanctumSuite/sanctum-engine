@@ -17,8 +17,14 @@ class ChunkingConfig(BaseModel):
 class TaskRequest(BaseModel):
     task_type: str = Field(..., description="extract_json, generate_text, embed, vision, translate, rerank")
     model_preference: str = Field("fast", description="reasoning, fast, vision, embedding, translation, or model name")
+    # Prompt-pair mode — simple single-turn tasks.
     system_prompt: str = ""
     user_prompt: str = ""
+    # Multi-turn mode — when set, overrides system_prompt + user_prompt.
+    messages: list[dict[str, Any]] | None = Field(
+        None,
+        description="OpenAI-style chat messages ({role, content}). Overrides system_prompt/user_prompt when set.",
+    )
     output_schema: dict[str, Any] | None = Field(None, description="JSON Schema for output validation")
     max_retries: int = Field(3, ge=1, le=5)
     context_budget: int | None = Field(None, description="Max tokens for this task")

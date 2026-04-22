@@ -61,6 +61,7 @@ async def run_task(
     *,
     system_prompt: str = "",
     user_prompt: str = "",
+    messages: list[dict[str, Any]] | None = None,
     model: str | None = None,
     output_schema: dict[str, Any] | None = None,
     max_retries: int = 3,
@@ -81,6 +82,11 @@ async def run_task(
     task_type:       "generate_text" | "extract_json" | "embed" | "vision" | "translate" | "rerank"
     model_preference:"reasoning" | "fast" | "vision" | "embedding" | "translation" | "ocr" | <model-name>
 
+    messages:        Optional full chat history as OpenAI-style dicts
+                     ({"role": "system"|"user"|"assistant", "content": str}).
+                     When set, overrides system_prompt/user_prompt — use this
+                     for multi-turn conversations.
+
     on_complete:     optional callback receiving Engine's full `meta` dict
                      (model_used, runtime, tokens_in, tokens_out, cost_usd,
                      attempts, latency_ms, …) on success. Use for cost
@@ -94,6 +100,8 @@ async def run_task(
         "user_prompt": user_prompt,
         "max_retries": max_retries,
     }
+    if messages is not None:
+        payload["messages"] = messages
     if model is not None:
         payload["model"] = model
     if output_schema is not None:
@@ -176,6 +184,7 @@ async def run_task_stream(
     *,
     system_prompt: str = "",
     user_prompt: str = "",
+    messages: list[dict[str, Any]] | None = None,
     model: str | None = None,
     max_retries: int = 1,
     context_budget: int | None = None,
@@ -205,6 +214,8 @@ async def run_task_stream(
         "user_prompt": user_prompt,
         "max_retries": max_retries,
     }
+    if messages is not None:
+        payload["messages"] = messages
     if model is not None:
         payload["model"] = model
     if context_budget is not None:

@@ -137,11 +137,25 @@ async def stream_task(request: TaskRequest, db: Session = Depends(get_db)):
             resolved.safe_context_limit,
         )
 
-        system_prompt = request.system_prompt
-        user_prompt = request.user_prompt
-        model_config = resolved.config
-        if model_config.get("append_to_prompt"):
-            user_prompt = user_prompt + " " + model_config["append_to_prompt"]
+        # messages-array mode vs prompt-pair mode (same rule as /task)
+        if request.messages:
+            messages = list(request.messages)
+            system_prompt = "\n".join(
+                str(m.get("content") or "") for m in messages if m.get("role") == "system"
+            )
+            user_prompt = "\n".join(
+                str(m.get("content") or "") for m in messages if m.get("role") != "system"
+            )
+        else:
+            system_prompt = request.system_prompt
+            user_prompt = request.user_prompt
+            model_config = resolved.config
+            if model_config.get("append_to_prompt"):
+                user_prompt = user_prompt + " " + model_config["append_to_prompt"]
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ]
 
         budget = context_manager.check_context_budget(
             system_prompt=system_prompt,
@@ -156,11 +170,6 @@ async def stream_task(request: TaskRequest, db: Session = Depends(get_db)):
                 "message": budget.message,
             })
             return
-
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
 
         tokens_in = 0
         tokens_out = 0
